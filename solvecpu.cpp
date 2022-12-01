@@ -22,7 +22,7 @@ void readSudokuFromFile(std::string filepath, int* board)
     }
 }
 
-void printSudoku(int* board)
+void printSudoku(const int* board)
 {
     const std::string lineBreak = "+-------+-------+-------+\n";
     const std::string columnBreak = "| ";
@@ -55,7 +55,7 @@ void printSudoku(int* board)
     std::cout << lineBreak;
 }
 
-bool findEmpty(int* board, int& i, int& j)
+bool findEmpty(const int* board, int& i, int& j)
 {
     for(int k = 0; k < BOARDSIZE; ++k)
     {
@@ -72,7 +72,7 @@ bool findEmpty(int* board, int& i, int& j)
     return false;
 }
 
-bool checkIfCorrectRow(int* board, const int& i, const int& value)
+bool checkIfCorrectRow(const int* board, const int& i, const int& value)
 {
     for(int j = 0; j < BOARDSIZE; ++j)
     {
@@ -84,7 +84,7 @@ bool checkIfCorrectRow(int* board, const int& i, const int& value)
     return true;
 }
 
-bool checkIfCorrectColumn(int* board, const int& j, const int& value)
+bool checkIfCorrectColumn(const int* board, const int& j, const int& value)
 {
     for(int i = 0; i < BOARDSIZE; ++i)
     {
@@ -96,7 +96,7 @@ bool checkIfCorrectColumn(int* board, const int& j, const int& value)
     return true;
 }
 
-bool checkIfCorrectBox(int* board, const int& i, const int& j, const int& value)
+bool checkIfCorrectBox(const int* board, const int& i, const int& j, const int& value)
 {
     int rowCenter = (i / 3) * 3 + 1;
     int columnCenter = (j / 3) * 3 + 1;
@@ -114,7 +114,7 @@ bool checkIfCorrectBox(int* board, const int& i, const int& j, const int& value)
     return true;
 }
 
-bool checkIfCorrect(int* board, int i, int j, int value)
+bool checkIfCorrect(const int* board, int i, int j, int value)
 {
     return checkIfCorrectRow(board, i, value) && checkIfCorrectColumn(board, j, value) && checkIfCorrectBox(board, i, j, value);
 }
@@ -129,11 +129,11 @@ bool solveBacktracking(int* board)
         return true;
     }
 
-    for(int x = 1; x < 10; ++x)
+    for(int num = 1; num < 10; ++num)
     {
-        if(checkIfCorrect(board, i, j, x))
+        if(checkIfCorrect(board, i, j, num))
         {
-            board[i * BOARDSIZE + j] = x;
+            board[i * BOARDSIZE + j] = num;
             if(solveBacktracking(board))
             {
                 return true;
