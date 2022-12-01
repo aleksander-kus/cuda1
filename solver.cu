@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <string>
 #include <chrono>
+#include <bitset>
 
 #define ERR(status) { \
     if (status != cudaSuccess) { \
@@ -18,6 +19,7 @@
 #define BOARDSIZE 9
 #define BOARDLENGTH 81
 #define BLANK 0
+#define MEMORY_USED 0.1
 
 // cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size);
 
@@ -109,7 +111,7 @@ __device__ bool findEmpty(const char* board, int& i, int& j)
     return false;
 }
 
-__device__ bool checkIfCorrectRow(const char* board, const int& i, const char& value)
+__device__ bool tryToInsertRow(const char* board, const int& i, const char& value)
 {
     for(int j = 0; j < BOARDSIZE; ++j)
     {
@@ -121,7 +123,7 @@ __device__ bool checkIfCorrectRow(const char* board, const int& i, const char& v
     return true;
 }
 
-__device__ bool checkIfCorrectColumn(const char* board, const int& j, const char& value)
+__device__ bool tryToInsertColumn(const char* board, const int& j, const char& value)
 {
     for(int i = 0; i < BOARDSIZE; ++i)
     {
@@ -133,7 +135,7 @@ __device__ bool checkIfCorrectColumn(const char* board, const int& j, const char
     return true;
 }
 
-__device__ bool checkIfCorrectBox(const char* board, const int& i, const int& j, const char& value)
+__device__ bool tryToInsertBox(const char* board, const int& i, const int& j, const char& value)
 {
     int rowCenter = (i / 3) * 3 + 1;
     int columnCenter = (j / 3) * 3 + 1;
@@ -152,9 +154,9 @@ __device__ bool checkIfCorrectBox(const char* board, const int& i, const int& j,
 }
 
 
-__device__ bool checkIfCorrect(char* board, int i, int j, char value)
+__device__ bool tryToInsert(char* board, int i, int j, char value)
 {
-    return checkIfCorrectRow(board, i, value) && checkIfCorrectColumn(board, j, value) && checkIfCorrectBox(board, i, j, value);
+    return tryToInsertRow(board, i, value) && tryToInsertColumn(board, j, value) && tryToInsertBox(board, i, j, value);
 }
 
 __device__ void copyBoardToOutput(const char* board, char* output)
@@ -171,8 +173,7 @@ __device__ void copyBoardToOutput(const char* board, char* output)
 enum GENERATE_STATUS {
     OK = 0,
     SOLVED = 1,
-    FAILURE = 2,
-    OUT_OF_MEMORY = 3
+    OUT_OF_MEMORY = 2
 };
 
 __global__ void generate(char* input, char* output, int inputSize, int* outputIndex, int maxOutputSize, GENERATE_STATUS* status)
@@ -181,15 +182,9 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
 
     while(id < inputSize && *status == OK)
     {
-        # if __CUDA_ARCH__>=200
-            //printf("%d \n", id);
-        #endif 
         int i = 0, j = 0;
 
         auto tab = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
-            # if __CUDA_ARCH__>=200
-                //printf("Value at 0, 1: %d \n", tab[1]);
-            #endif 
         if(!findEmpty(tab, i, j))
         {
             *status = SOLVED;
@@ -203,14 +198,8 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
                 *status = OUT_OF_MEMORY;
                 return;
             }
-            # if __CUDA_ARCH__>=200
-                //printf("Testing id %d %d, value %d \n", i, j, num);
-            #endif 
-            if(checkIfCorrect(tab, i, j, num))
+            if(tryToInsert(tab, i, j, num))
             {
-                            # if __CUDA_ARCH__>=200
-                //printf("OK, writing id %d %d, value %d \n", i, j, num);
-            #endif 
                 tab[i * BOARDSIZE + j] = num;
                 copyBoardToOutput(tab, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
                 tab[i * BOARDSIZE + j] = BLANK;
@@ -220,54 +209,51 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
     }
 }
 
+int getMaxBoardNumber()
+{
+    size_t free_memory;
+	cudaMemGetInfo(&free_memory, nullptr);
+    return free_memory * MEMORY_USED / (sizeof(char) * BOARDLENGTH * 2);
+}
+
 bool solveGpu(char* board)
 {
+    int maxBoardNumber = getMaxBoardNumber();
     char *dev_input = 0, *dev_output = 0;
     int* dev_outputIndex = 0;
     GENERATE_STATUS* dev_status;
     GENERATE_STATUS status;
-    int maxOutputSize = 100;
     int inputSize = 1;
+    int oldInputSize = 1;
     int generation = 0;
-    int grids = 1024;
-    int blocks = 512;
+    int grids = 2048;
+    int blocks = 1024;
 
-    ERR(cudaMalloc(&dev_input, sizeof(char) * BOARDLENGTH * maxOutputSize));
-    ERR(cudaMalloc(&dev_output, sizeof(char) * BOARDLENGTH * maxOutputSize));
+    ERR(cudaMalloc(&dev_input, sizeof(char) * BOARDLENGTH * maxBoardNumber));
+    ERR(cudaMalloc(&dev_output, sizeof(char) * BOARDLENGTH * maxBoardNumber));
     ERR(cudaMalloc(&dev_outputIndex, sizeof(int)));
     ERR(cudaMalloc(&dev_status, sizeof(int)));
 
     ERR(cudaMemcpy(dev_input, board, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyHostToDevice));
-    ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxOutputSize));
+    ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxBoardNumber));
     std::cout << "Solving sudoku..." << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
-    while(generation < 60)
+    while(generation < 15)
     {
         std::cout << "Running with input size " << inputSize << std::endl;
 
         ERR(cudaMemset(dev_outputIndex, 0, sizeof(int)));
         if(generation % 2 == 0)
         {
-            // char test[BOARDLENGTH*11];
-            // ERR(cudaMemcpy(test, dev_input, sizeof(char) * BOARDLENGTH * 11, cudaMemcpyKind::cudaMemcpyDeviceToHost));
-            // for(int i = 0; i < 10; ++i)
-            // {
-            //     printSudoku(test + BOARDLENGTH * i);
-            // }
-            generate<<<grids, blocks>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxOutputSize, dev_status);
+            generate<<<grids, blocks>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
             cudaDeviceSynchronize();
         }
         else
         {
-            // char test[BOARDLENGTH*11];
-            // ERR(cudaMemcpy(test, dev_output, sizeof(char) * BOARDLENGTH * 11, cudaMemcpyKind::cudaMemcpyDeviceToHost));
-            // for(int i = 0; i < 10; ++i)
-            // {
-            //     printSudoku(test + BOARDLENGTH * i);
-            // }
-            generate<<<grids, blocks>>>(dev_output, dev_input, inputSize, dev_outputIndex, maxOutputSize, dev_status);
+            generate<<<grids, blocks>>>(dev_output, dev_input, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
             cudaDeviceSynchronize();
         }
+        oldInputSize = inputSize;
         ERR(cudaMemcpy(&inputSize, dev_outputIndex, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ERR(cudaMemcpy(&status, dev_status, sizeof(GENERATE_STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         if(status != OK || inputSize == 0)
@@ -279,10 +265,10 @@ bool solveGpu(char* board)
     std::cout << "Total time for generating boards: " << duration.count() << " microseconds" << std::endl;
     std::cout << "Finished generating boards with " << inputSize << " boards on generation " << generation << std::endl;
 
-    auto result = generation % 2 == 0 ? dev_input : dev_output;
     if (status == SOLVED)
     {
         std::cout << "Sudoku solved by BFS!" << std::endl;
+        auto result = generation % 2 == 0 ? dev_input : dev_output; // take the output as result
         char output[BOARDLENGTH];
         ERR(cudaMemcpy(output, result, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
         printSudoku(output);
@@ -293,7 +279,9 @@ bool solveGpu(char* board)
     }
     else if (status == OUT_OF_MEMORY)
     {
-        std::cout << "No bueno amigo, out of memory excepcione nicht gut jajajajaj";
+        std::cout << "Available memory exceeded, falling back to last generation of boards" << std::endl;
+        std::cout << "Generation " << generation - 1 << " with " << oldInputSize << " boards" << std::endl;
+        auto result = generation % 2 == 1 ? dev_input : dev_output; // take the last input as result
     }
 
 
@@ -305,41 +293,98 @@ bool solveGpu(char* board)
     return true;
 }
 
-int main()
+bool checkIfValid(const char* board)
 {
-    // const int arraySize = 6;
-    // const int a[arraySize] = { 1, 2, 3, 4, 5, 6 };
-    // //const int b[arraySize] = { 10, 20, 30, 40, 50 };
-    // int c[arraySize] = { 0 };
+    std::bitset<10> bitset;
+    // check rows
+    for(int i = 0; i < BOARDSIZE; ++i)
+    {
+        for(int j = 0; j < BOARDSIZE; ++j)
+        {
+            auto value = board[i * BOARDSIZE + j];
+            if (value == BLANK)
+            {
+                continue;
+            }
+            if (bitset.test(value))
+            {
+                return false;
+            }
+            bitset.set(value, true);
+        }
+        bitset.reset();
+    }
 
-    // Add vectors in parallel.
-    //cudaError_t cudaStatus = ReduceWithCuda(c, a, arraySize);
-    // if (cudaStatus != cudaSuccess) {
-    //     fprintf(stderr, "addWithCuda failed!");
-    //     return 1;
-    // }
+    // check columns
+    for (int j = 0; j < BOARDSIZE; ++j)
+    {
+        for (int i = 0; i < BOARDSIZE; ++i)
+        {
+            auto value = board[i * BOARDSIZE + j];
+            if (value == BLANK)
+            {
+                continue;
+            }
+            if (bitset.test(value))
+            {
+                return false;
+            }
+            bitset.set(value, true);
+        }
+        bitset.reset();
+    }
 
-    // printf("{1,2,3,4,5} + {10,20,30,40,50} = {%d,%d,%d,%d,%d}\n",
-    //     c[0], c[1], c[2], c[3], c[4]);
 
-    // // cudaDeviceReset must be called before exiting in order for profiling and
-    // // tracing tools such as Nsight and Visual Profiler to show complete traces.
-    // cudaStatus = cudaDeviceReset();
-    // if (cudaStatus != cudaSuccess) {
-    //     fprintf(stderr, "cudaDeviceReset failed!");
-    //     return 1;
-    // }
-    // size_t free_memory;
-	// cudaMemGetInfo(&free_memory, nullptr);
-    // std::cout << "memory " << free_memory;
-    // return 0;
-    
+    for(int i = 0; i < 3; ++i)
+    {
+        for(int j = 0; j < 3; ++j)
+        {
+            int rowCenter = (i / 3) * 3 + 1;
+            int columnCenter = (j / 3) * 3 + 1;
+            for(int k = -1; k < 2; ++k)
+            {
+                for(int l = -1; l < 2; ++l)
+                {
+                    auto value = board[(rowCenter + k) * BOARDSIZE + (columnCenter + l)];
+                    if (value == BLANK)
+                    {
+                        continue;
+                    }
+                    if (bitset.test(value))
+                    {
+                        return false;
+                    }
+                    bitset.set(value, true);
+                }
+            }
+            bitset.reset();
+        }
+    }
+
+
+
+    return true;
+}
+
+int main(int argc, char** argv)
+{    
+    if(argc != 2)
+    {
+        std::cout << "USAGE: solvecpu filepath" << std::endl;
+        return 1;
+    }
+
     // data in our board will always be from range <1, 9>, so we use chars as they use only 1B of memory
     char board[BOARDLENGTH];
 
-
-    readSudokuFromFile("test1.in", board);
+    readSudokuFromFile(argv[1], board);
     printSudoku(board);
+
+    if(!checkIfValid(board))
+    {
+        std::cout << "Given sudoku is invalid" << std::endl;
+        exit(EXIT_FAILURE);
+    }
     //std::cout << "Solving sudoku..." << std::endl;
     //auto start = std::chrono::high_resolution_clock::now();
     auto result = solveGpu(board);
@@ -358,118 +403,3 @@ int main()
     //std::cout << "Total time for solving sudoku: " << duration.count() << " microseconds" << std::endl;
     return 0;
 }
-
-// cudaError_t ReduceWithCuda(int* out, const int* a, unsigned int size)
-// {
-//     int* dev_input = 0;
-//     int* dev_output = 0;
-
-//     // Choose which GPU to run on, change this on a multi-GPU system.
-//     cudaSetDevice(0);
-//     if (cudaSetDevice(0) != cudaSuccess) ERR("cudaSetDevice");
-
-//     // Allocate GPU buffers for three vectors (two input, one output)    .
-//     if (cudaMalloc((void**)&dev_output, size * sizeof(int)) != cudaSuccess) ERR("cudaMalloc");    
-//     if (cudaMalloc((void**)&dev_input, size * sizeof(int)) != cudaSuccess) ERR("cudaMalloc");
-
-//     // Copy input vectors from host memory to GPU buffers.
-//     if (cudaMemcpy(dev_input, a, size * sizeof(int), cudaMemcpyHostToDevice) != cudaSuccess) ERR("cudaMemcpy");
-
-//     reduce0<<<1, size>>>(dev_input, dev_output);
-
-//     if (cudaGetLastError() != cudaSuccess) {
-//         fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaGetLastError()));
-//         goto Error;
-//     }
-
-//     // cudaDeviceSynchronize waits for the kernel to finish, and returns
-// // any errors encountered during the launch.
-//     if (cudaDeviceSynchronize() != cudaSuccess) ERR("cudaDeviceSynchronize");
-
-
-// Error:
-//     cudaFree(dev_input);
-//     cudaFree(dev_output);
-
-//     return cudaErrorAlreadyAcquired;
-// }
-
-// // Helper function for using CUDA to add vectors in parallel.
-// cudaError_t addWithCuda(int *c, const int *a, const int *b, unsigned int size)
-// {
-//     int *dev_a = 0;
-//     int *dev_b = 0;
-//     int *dev_c = 0;
-//     cudaError_t cudaStatus;
-
-//     // Choose which GPU to run on, change this on a multi-GPU system.
-//     cudaStatus = cudaSetDevice(0);
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaSetDevice failed!  Do you have a CUDA-capable GPU installed?");
-//         goto Error;
-//     }
-
-//     // Allocate GPU buffers for three vectors (two input, one output)    .
-//     cudaStatus = cudaMalloc((void**)&dev_c, size * sizeof(int));
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMalloc failed!");
-//         goto Error;
-//     }
-
-//     cudaStatus = cudaMalloc((void**)&dev_a, size * sizeof(int));
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMalloc failed!");
-//         goto Error;
-//     }
-
-//     cudaStatus = cudaMalloc((void**)&dev_b, size * sizeof(int));
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMalloc failed!");
-//         goto Error;
-//     }
-
-//     // Copy input vectors from host memory to GPU buffers.
-//     cudaStatus = cudaMemcpy(dev_a, a, size * sizeof(int), cudaMemcpyHostToDevice);
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMemcpy failed!");
-//         goto Error;
-//     }
-
-//     cudaStatus = cudaMemcpy(dev_b, b, size * sizeof(int), cudaMemcpyHostToDevice);
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMemcpy failed!");
-//         goto Error;
-//     }
-
-//     // Launch a kernel on the GPU with one thread for each element.
-//     addKernel<<<1, size>>>(dev_c, dev_a, dev_b);
-
-//     // Check for any errors launching the kernel
-//     cudaStatus = cudaGetLastError();
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "addKernel launch failed: %s\n", cudaGetErrorString(cudaStatus));
-//         goto Error;
-//     }
-    
-//     // cudaDeviceSynchronize waits for the kernel to finish, and returns
-//     // any errors encountered during the launch.
-//     cudaStatus = cudaDeviceSynchronize();
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaDeviceSynchronize returned error code %d after launching addKernel!\n", cudaStatus);
-//         goto Error;
-//     }
-
-//     // Copy output vector from GPU buffer to host memory.
-//     cudaStatus = cudaMemcpy(c, dev_c, size * sizeof(int), cudaMemcpyDeviceToHost);
-//     if (cudaStatus != cudaSuccess) {
-//         fprintf(stderr, "cudaMemcpy failed!");
-//         goto Error;
-//     }
-
-// Error:
-//     cudaFree(dev_c);
-//     cudaFree(dev_a);
-//     cudaFree(dev_b);
-    
-//     return cudaStatus;
-// }
