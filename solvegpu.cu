@@ -20,7 +20,6 @@ enum GENERATE_STATUS {
     OUT_OF_MEMORY = 2
 };
 
-
 __host__ __device__ bool findEmpty(const char* board, int& i, int& j)
 {
     for(int k = 0; k < BOARDSIZE; ++k)
@@ -104,8 +103,8 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
     {
         int i = 0, j = 0;
 
-        auto tab = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
-        if(!findEmpty(tab, i, j))
+        auto board = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
+        if(!findEmpty(board, i, j))
         {
             *status = SOLVED;
             return;
@@ -118,12 +117,74 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
                 *status = OUT_OF_MEMORY;
                 return;
             }
-            if(tryToInsert(tab, i, j, num))
+            if(tryToInsert(board, i, j, num))
             {
-                tab[i * BOARDSIZE + j] = num;
-                copyBoardToOutput(tab, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
-                tab[i * BOARDSIZE + j] = BLANK;
+                board[i * BOARDSIZE + j] = num;
+                copyBoardToOutput(board, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
+                board[i * BOARDSIZE + j] = BLANK;
             }
+        }
+        id += gridDim.x * blockDim.x;
+    }
+}
+
+__device__ void getEmptyIndices(const char* board, char* indices, char* size)
+{
+    for(char i = 0; i < BOARDLENGTH; ++i)
+    {
+        if(board[i] == BLANK)
+        {
+            indices[*size] = i;
+            ++(*size);
+        }
+    }
+}
+
+__global__ void backtrack(char* input, char* output, int inputSize, bool* isSolved)
+{
+    auto id = blockDim.x * blockIdx.x + threadIdx.x;
+
+    char emptyIndices[BOARDLENGTH];
+    char emptyIndicesSize = 0;
+    int i = 0, j = 0;
+
+    while(id < inputSize && !*isSolved)
+    {
+        auto board = input + id * BOARDLENGTH;
+        emptyIndicesSize = 0;
+        getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
+        int index = 0;
+        # if __CUDA_ARCH__>=200
+            //printf("Found %d empty indices for board \n", emptyIndicesSize);
+        #endif
+        int count = 0;
+        while(index >= 0 && index < emptyIndicesSize)
+        {
+            auto emptyIndex = emptyIndices[index];
+            i = emptyIndex / BOARDSIZE;
+            j = emptyIndex % BOARDSIZE;
+            #if __CUDA_ARCH__>=200
+                //printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex]);
+            #endif
+            if(!tryToInsert(board, i, j, board[emptyIndex] + 1))
+            {
+                if(board[emptyIndex] >= 8)
+                {
+                    board[emptyIndex] = -1;
+                    --index;
+                }
+            }
+            else
+            {
+                ++index;
+            }
+            ++board[emptyIndex];
+        }
+
+        if(index == emptyIndicesSize)
+        {
+            *isSolved = true;
+            copyBoardToOutput(board, output);
         }
         id += gridDim.x * blockDim.x;
     }
@@ -156,7 +217,6 @@ char* solveGpu(const char* board)
     ERR(cudaMemcpy(dev_input, board, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyHostToDevice));
     ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxBoardNumber));
 
-    std::cout << "Solving sudoku..." << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
     while(generation < 81)
     {
@@ -197,13 +257,19 @@ char* solveGpu(const char* board)
     {
         std::cout << "No valid solutions were found for sudoku" << std::endl;
     }
-    else if (status == OUT_OF_MEMORY)
+    else //if (status == OUT_OF_MEMORY)
     {
         std::cout << "Available memory exceeded, falling back to last generation of boards" << std::endl;
         std::cout << "Generation " << generation - 1 << " with " << oldInputSize << " boards" << std::endl;
         auto result = generation % 2 == 1 ? dev_input : dev_output; // take the last input as result
+        bool* dev_isSolved;
+        ERR(cudaMalloc(&dev_isSolved, sizeof(bool)));
+        ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
+        backtrack<<<grids, blocks>>>(result, dev_output, oldInputSize, dev_isSolved);
+        ERR(cudaMemcpy(ret, dev_output, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        ERR(cudaFree(dev_isSolved));
+        return ret;
     }
-
 
     ERR(cudaFree(dev_input));
     ERR(cudaFree(dev_output));

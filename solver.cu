@@ -65,7 +65,7 @@ void printSudoku(char* board)
 
 
 
-bool checkIfValid(const char* board)
+bool checkIfSudokuValid(const char* board)
 {
     std::bitset<10> bitset;
     // check rows
@@ -150,7 +150,7 @@ int main(int argc, char** argv)
     readSudokuFromFile(argv[1], board);
     printSudoku(board);
 
-    if(!checkIfValid(board))
+    if(!checkIfSudokuValid(board))
     {
         std::cout << "Given sudoku is invalid" << std::endl;
         exit(EXIT_FAILURE);
