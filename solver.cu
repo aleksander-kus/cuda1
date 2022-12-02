@@ -172,7 +172,7 @@ int main(int argc, char** argv)
     }
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     std::cout << "Total time for cpu: " << duration.count() << " microseconds" << std::endl;
-
+    
     std::cout << "Solving sudoku gpu..." << std::endl;
     start = std::chrono::high_resolution_clock::now();
     result = solveGpu(board);
