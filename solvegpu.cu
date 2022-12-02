@@ -231,9 +231,9 @@ char* solveGpu(const char* board)
         oldInputSize = inputSize;
         ERR(cudaMemcpy(&inputSize, dev_outputIndex, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ERR(cudaMemcpy(&status, dev_status, sizeof(GENERATE_STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        ++generation;
         if(status != OK || inputSize == 0)
             break;
-        ++generation;
     }
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
@@ -258,16 +258,20 @@ char* solveGpu(const char* board)
         auto result = generation % 2 == 1 ? dev_input : dev_output; // take the last input as result
         bool* dev_isSolved;
         char* dev_output_backtracking;
-        ERR(cudaMalloc(&dev_output_backtracking, sizeof(char) * BOARDLENGTH));
-
-        ERR(cudaMalloc(&dev_isSolved, sizeof(bool)));
         ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
+        ERR(cudaMalloc(&dev_output_backtracking, sizeof(char) * BOARDLENGTH));
+        ERR(cudaMalloc(&dev_isSolved, sizeof(bool)));
+
+
         start = std::chrono::high_resolution_clock::now();
+
         backtrack<<<blocks, threads>>>(result, dev_output_backtracking, oldInputSize, dev_isSolved);
         ERR(cudaMemcpy(ret, dev_output_backtracking, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
+
         stop = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         std::cout << "Backtracking took: " << duration.count() << " microseconds" << std::endl;
+
         ERR(cudaFree(dev_isSolved));
     }
 
