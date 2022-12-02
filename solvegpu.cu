@@ -238,14 +238,12 @@ char* solveGpu(const char* board)
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     std::cout << "Total time for generating boards: " << duration.count() << " microseconds" << std::endl;
-    std::cout << "Finished generating boards with " << inputSize << " boards on generation " << generation << std::endl;
 
-    char* ret = nullptr;
+    char* ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
+
     if (status == SOLVED)
     {
-        std::cout << "Sudoku solved by BFS!" << std::endl;
         auto result = generation % 2 == 0 ? dev_input : dev_output; // take the output as result
-        ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
         ERR(cudaMemcpy(ret, result, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
     }
     else if (inputSize == 0)
@@ -254,14 +252,11 @@ char* solveGpu(const char* board)
     }
     else
     {
-        std::cout << "Available memory exceeded, falling back to last generation of boards and using backtracking" << std::endl;
         auto result = generation % 2 == 1 ? dev_input : dev_output; // take the last input as result
         bool* dev_isSolved;
         char* dev_output_backtracking;
-        ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
         ERR(cudaMalloc(&dev_output_backtracking, sizeof(char) * BOARDLENGTH));
         ERR(cudaMalloc(&dev_isSolved, sizeof(bool)));
-
 
         start = std::chrono::high_resolution_clock::now();
 
