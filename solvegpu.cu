@@ -154,17 +154,18 @@ __global__ void backtrack(char* input, char* output, int inputSize, bool* isSolv
         emptyIndicesSize = 0;
         getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
         int index = 0;
-        # if __CUDA_ARCH__>=200
-            //printf("Found %d empty indices for board \n", emptyIndicesSize);
+        # if __CUDA_ARCH__>=200 && id == 0
+            printf("Found %d empty indices for board \n", emptyIndicesSize);
         #endif
+        return;
         int count = 0;
         while(index >= 0 && index < emptyIndicesSize)
         {
             auto emptyIndex = emptyIndices[index];
             i = emptyIndex / BOARDSIZE;
             j = emptyIndex % BOARDSIZE;
-            #if __CUDA_ARCH__>=200
-                //printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex]);
+            #if __CUDA_ARCH__>=200 && id == 0
+                printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex]);
             #endif
             if(!tryToInsert(board, i, j, board[emptyIndex] + 1))
             {
@@ -207,8 +208,8 @@ char* solveGpu(const char* board)
     int inputSize = 1;
     int oldInputSize = 1;
     int generation = 0;
-    int grids = 2048;
-    int blocks = 1024;
+    int blocks = 2048;
+    int threads = 1024;
 
     ERR(cudaMalloc(&dev_input, sizeof(char) * BOARDLENGTH * maxBoardNumber));
     ERR(cudaMalloc(&dev_output, sizeof(char) * BOARDLENGTH * maxBoardNumber));
@@ -218,19 +219,19 @@ char* solveGpu(const char* board)
     ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxBoardNumber));
 
     auto start = std::chrono::high_resolution_clock::now();
-    while(generation < 81)
+    while(generation < 40)
     {
         std::cout << "Running with input size " << inputSize << std::endl;
 
         ERR(cudaMemset(dev_outputIndex, 0, sizeof(int)));
         if(generation % 2 == 0)
         {
-            generate<<<grids, blocks>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
+            generate<<<blocks, threads>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
             cudaDeviceSynchronize();
         }
         else
         {
-            generate<<<grids, blocks>>>(dev_output, dev_input, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
+            generate<<<blocks, threads>>>(dev_output, dev_input, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
             cudaDeviceSynchronize();
         }
         oldInputSize = inputSize;
@@ -265,7 +266,9 @@ char* solveGpu(const char* board)
         bool* dev_isSolved;
         ERR(cudaMalloc(&dev_isSolved, sizeof(bool)));
         ret = (char*)malloc(sizeof(char) * BOARDLENGTH);
-        backtrack<<<grids, blocks>>>(result, dev_output, oldInputSize, dev_isSolved);
+        //ERR(cudaMemcpy(ret, result, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        //return ret;
+        backtrack<<<1, 1>>>(result, dev_output, oldInputSize, dev_isSolved);
         ERR(cudaMemcpy(ret, dev_output, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ERR(cudaFree(dev_isSolved));
         return ret;
