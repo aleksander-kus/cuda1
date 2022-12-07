@@ -5,7 +5,8 @@
 
 #include "solvegpu.cuh"
 
-#define MEMORY_USED 0.01
+#define MEMORY_USED 0.2
+#define GENERATION_LIMIT 81
 #define BLOCKS 2048
 #define THREADS 1024
 
@@ -193,7 +194,7 @@ __global__ void backtrack(char* input, char* output, int inputSize, STATUS* stat
     }
 }
 
-void solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputIndex, STATUS* dev_status, const int& maxBoardCount)
+bool solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputIndex, STATUS* dev_status, const int& maxBoardCount)
 {
     int inputSize = 1;
     int oldInputSize = 1;
@@ -204,7 +205,7 @@ void solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputI
     ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxBoardCount));
 
     auto start = std::chrono::high_resolution_clock::now();
-    while(generation < 35)
+    while(generation < GENERATION_LIMIT)
     {
         ERR(cudaMemset(dev_outputIndex, 0, sizeof(int)));
         if (generation % 2 == 0)
@@ -224,16 +225,18 @@ void solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputI
     }
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
-    std::cout << "Total time for generating boards: " << duration.count() << " microseconds" << std::endl;
+    std::cout << "Generating boards took: " << duration.count() << " microseconds" << std::endl;
 
     if (status == SOLVED)
     {
         auto generationResult = generation % 2 == 1 ? dev_input : dev_output; // take the output as result
         ERR(cudaMemcpy(board, generationResult, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        return true;
     }
     else if (inputSize == 0)
     {
         std::cout << "No valid solutions were found for sudoku" << std::endl;
+        return false;
     }
     else
     {
@@ -243,11 +246,18 @@ void solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputI
         start = std::chrono::high_resolution_clock::now();
 
         backtrack<<<BLOCKS, THREADS>>>(generationResult, output, oldInputSize, dev_status);
+        ERR(cudaMemcpy(&status, dev_status, sizeof(STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        if (status != SOLVED)
+        {
+            std::cout << "No valid solutions were found for sudoku" << std::endl;
+            return false;
+        }
         ERR(cudaMemcpy(board, output, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
 
         stop = std::chrono::high_resolution_clock::now();
         duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
         std::cout << "Backtracking took: " << duration.count() << " microseconds" << std::endl;
+        return true;
     }
 }
 
@@ -278,12 +288,12 @@ char* solveGpu(const char* board)
     char* copy = new char[BOARDLENGTH];
     memcpy(copy, board, BOARDLENGTH);
 
-    solveBoard(copy, dev_input, dev_output, dev_outputIndex, dev_status, maxBoardCount);
+    auto result = solveBoard(copy, dev_input, dev_output, dev_outputIndex, dev_status, maxBoardCount);
 
     ERR(cudaFree(dev_input));
     ERR(cudaFree(dev_output));
     ERR(cudaFree(dev_outputIndex));
     ERR(cudaFree(dev_status));
 
-    return copy;
+    return result ? copy : nullptr;
 }
