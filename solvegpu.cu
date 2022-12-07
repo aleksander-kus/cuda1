@@ -140,51 +140,61 @@ __device__ void getEmptyIndices(const char* board, char* indices, char* size)
     }
 }
 
+__device__ bool backtrackBoard(char* board, char* emptyIndices)
+{
+    char emptyIndicesSize = 0;
+    getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
+    int index = 0, i = 0, j = 0;
+    while(index >= 0 && index < emptyIndicesSize)
+    {
+        auto emptyIndex = emptyIndices[index];
+        i = emptyIndex / BOARDSIZE;
+        j = emptyIndex % BOARDSIZE;
+        // #if __CUDA_ARCH__>=200
+        //     printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex] + 1);
+        // #endif
+        if (!tryToInsert(board, i, j, board[emptyIndex] + 1))
+        {
+            if (board[emptyIndex] >= 8)
+            {
+                board[emptyIndex] = -1;
+                --index;
+            }
+        }
+        else
+        {
+            ++index;
+        }
+        ++board[emptyIndex];
+    }
+    if (index == emptyIndicesSize)
+    {
+            #if __CUDA_ARCH__>=200
+                printf("Found solution. index = %d, emptyI = %d \n", index, emptyIndicesSize);
+            #endif
+            return true;
+    }
+    return false;
+}
+
 __global__ void backtrack(char* input, char* output, int inputSize, bool* isSolved)
 {
     auto id = blockDim.x * blockIdx.x + threadIdx.x;
 
     char emptyIndices[BOARDLENGTH];
-    char emptyIndicesSize = 0;
-    int i = 0, j = 0;
+    //char emptyIndicesSize = 0;
+    //int i = 0, j = 0;
 
     while(id < inputSize && !*isSolved)
     {
         auto board = input + id * BOARDLENGTH;
-        emptyIndicesSize = 0;
-        getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
-        int index = 0;
-        while(index >= 0 && index < emptyIndicesSize)
-        {
-            auto emptyIndex = emptyIndices[index];
-            i = emptyIndex / BOARDSIZE;
-            j = emptyIndex % BOARDSIZE;
-            // #if __CUDA_ARCH__>=200
-            //     printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex] + 1);
-            // #endif
-            if (!tryToInsert(board, i, j, board[emptyIndex] + 1))
-            {
-                if (board[emptyIndex] >= 8)
-                {
-                    board[emptyIndex] = -1;
-                    --index;
-                }
-            }
-            else
-            {
-                ++index;
-            }
-            ++board[emptyIndex];
-        }
-
-        if (index == emptyIndicesSize)
+        
+        if(backtrackBoard(board, emptyIndices))
         {
             *isSolved = true;
-            #if __CUDA_ARCH__>=200
-                printf("Found solution. index = %d, emptyI = %d \n", index, emptyIndicesSize);
-            #endif
             copyBoardToOutput(board, output);
         }
+
         id += gridDim.x * blockDim.x;
     }
 }
