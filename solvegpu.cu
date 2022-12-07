@@ -98,35 +98,42 @@ __device__ void copyBoardToOutput(const char* board, char* output)
     }
 }
 
+__device__ void generateBoards(char* board, char* output, int* outputIndex, int maxOutputSize, STATUS* status)
+{
+    int i = 0, j = 0;
+
+    if (!findEmpty(board, i, j))
+    {
+        *status = SOLVED;
+        return;
+    }
+    // generate a separate board for all numbers available in the empty spot
+    for (int num = 1; num < 10; ++num)
+    {
+        if (*outputIndex >= maxOutputSize - 1)
+        {
+            *status = OUT_OF_MEMORY;
+            return;
+        }
+        if (tryToInsert(board, i, j, num))
+        {
+            board[i * BOARDSIZE + j] = num;
+            copyBoardToOutput(board, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
+            board[i * BOARDSIZE + j] = BLANK;
+        }
+    }
+}
+
 __global__ void generate(char* input, char* output, int inputSize, int* outputIndex, int maxOutputSize, STATUS* status)
 {
     auto id = blockDim.x * blockIdx.x + threadIdx.x;
 
     while (id < inputSize && *status == OK)
     {
-        int i = 0, j = 0;
-
         auto board = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
-        if (!findEmpty(board, i, j))
-        {
-            *status = SOLVED;
-            return;
-        }
-        // generate a separate board for all numbers available in the empty spot
-        for (int num = 1; num < 10; ++num)
-        {
-            if (*outputIndex >= maxOutputSize - 1)
-            {
-                *status = OUT_OF_MEMORY;
-                return;
-            }
-            if (tryToInsert(board, i, j, num))
-            {
-                board[i * BOARDSIZE + j] = num;
-                copyBoardToOutput(board, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
-                board[i * BOARDSIZE + j] = BLANK;
-            }
-        }
+
+        generateBoards(board, output, outputIndex, maxOutputSize, status);
+
         id += gridDim.x * blockDim.x;
     }
 }
