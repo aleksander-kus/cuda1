@@ -153,29 +153,29 @@ __device__ void getEmptyIndices(const char* board, char* indices, char* size)
 __device__ bool backtrackBoard(char* board, char* emptyIndices)
 {
     char emptyIndicesSize = 0;
+    // get the array of empty indices. we will try to fill them with correct values
     getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
     char index = 0, i = 0, j = 0;
     while(index >= 0 && index < emptyIndicesSize)
     {
+        // get the next empty space
         auto emptyIndex = emptyIndices[index];
         i = emptyIndex / BOARDSIZE;
         j = emptyIndex % BOARDSIZE;
-        // #if __CUDA_ARCH__>=200
-        //     printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex] + 1);
-        // #endif
-        if (!tryToInsert(board, i, j, board[emptyIndex] + 1))
-        {
-            if (board[emptyIndex] >= 8)
-            {
-                board[emptyIndex] = -1;
-                --index;
-            }
-        }
-        else
+
+        auto valid = tryToInsert(board, i, j, board[emptyIndex] + 1);
+        ++board[emptyIndex];
+
+        if (valid) // if the board after incrementation is valid, advance the index
         {
             ++index;
+            continue;
         }
-        ++board[emptyIndex];
+        if (board[emptyIndex] > 9) // if we tried all possible values in this space, revert the index
+        {
+            board[emptyIndex] = 0;
+            --index;
+        }
     }
 
     return index == emptyIndicesSize;
