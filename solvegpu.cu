@@ -22,11 +22,11 @@ enum GENERATE_STATUS {
 
 __host__ __device__ bool findEmpty(const char* board, int& i, int& j)
 {
-    for(int k = 0; k < BOARDSIZE; ++k)
+    for (int k = 0; k < BOARDSIZE; ++k)
     {
-        for(int l = 0; l < BOARDSIZE; ++l)
+        for (int l = 0; l < BOARDSIZE; ++l)
         {
-            if(board[k * BOARDSIZE + l] == 0)
+            if (board[k * BOARDSIZE + l] == 0)
             {
                 i = k;
                 j = l;
@@ -39,9 +39,9 @@ __host__ __device__ bool findEmpty(const char* board, int& i, int& j)
 
 __host__ __device__ bool tryToInsertRow(const char* board, const int& i, const char& value)
 {
-    for(int j = 0; j < BOARDSIZE; ++j)
+    for (int j = 0; j < BOARDSIZE; ++j)
     {
-        if(board[i * BOARDSIZE + j] == value)
+        if (board[i * BOARDSIZE + j] == value)
         {
             return false;
         }
@@ -51,9 +51,9 @@ __host__ __device__ bool tryToInsertRow(const char* board, const int& i, const c
 
 __host__ __device__ bool tryToInsertColumn(const char* board, const int& j, const char& value)
 {
-    for(int i = 0; i < BOARDSIZE; ++i)
+    for (int i = 0; i < BOARDSIZE; ++i)
     {
-        if(board[i * BOARDSIZE + j] == value)
+        if (board[i * BOARDSIZE + j] == value)
         {
             return false;
         }
@@ -66,11 +66,11 @@ __host__ __device__ bool tryToInsertBox(const char* board, const int& i, const i
     int rowCenter = (i / 3) * 3 + 1;
     int columnCenter = (j / 3) * 3 + 1;
 
-    for(int k = -1; k < 2; ++k)
+    for (int k = -1; k < 2; ++k)
     {
-        for(int l = -1; l < 2; ++l)
+        for (int l = -1; l < 2; ++l)
         {
-            if(board[(rowCenter + k) * BOARDSIZE + (columnCenter + l)] == value)
+            if (board[(rowCenter + k) * BOARDSIZE + (columnCenter + l)] == value)
             {
                 return false;
             }
@@ -86,9 +86,9 @@ __host__ __device__ bool tryToInsert(const char* board, const int& i, const int&
 
 __device__ void copyBoardToOutput(const char* board, char* output)
 {
-    for(int i = 0; i < BOARDSIZE; ++i)
+    for (int i = 0; i < BOARDSIZE; ++i)
     {
-        for(int j = 0; j < BOARDSIZE; ++j)
+        for (int j = 0; j < BOARDSIZE; ++j)
         {
             output[i * BOARDSIZE + j] = board[i * BOARDSIZE + j];
         }
@@ -99,25 +99,25 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
 {
     auto id = blockDim.x * blockIdx.x + threadIdx.x;
 
-    while(id < inputSize && *status == OK)
+    while (id < inputSize && *status == OK)
     {
         int i = 0, j = 0;
 
         auto board = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
-        if(!findEmpty(board, i, j))
+        if (!findEmpty(board, i, j))
         {
             *status = SOLVED;
             return;
         }
         // generate a separate board for all numbers available in the empty spot
-        for(int num = 1; num < 10; ++num)
+        for (int num = 1; num < 10; ++num)
         {
-            if(*outputIndex >= maxOutputSize - 1)
+            if (*outputIndex >= maxOutputSize - 1)
             {
                 *status = OUT_OF_MEMORY;
                 return;
             }
-            if(tryToInsert(board, i, j, num))
+            if (tryToInsert(board, i, j, num))
             {
                 board[i * BOARDSIZE + j] = num;
                 copyBoardToOutput(board, output + atomicAdd(outputIndex, 1) * BOARDLENGTH);
@@ -130,9 +130,9 @@ __global__ void generate(char* input, char* output, int inputSize, int* outputIn
 
 __device__ void getEmptyIndices(const char* board, char* indices, char* size)
 {
-    for(char i = 0; i < BOARDLENGTH; ++i)
+    for (char i = 0; i < BOARDLENGTH; ++i)
     {
-        if(board[i] == BLANK)
+        if (board[i] == BLANK)
         {
             indices[*size] = i;
             ++(*size);
@@ -162,9 +162,9 @@ __global__ void backtrack(char* input, char* output, int inputSize, bool* isSolv
             // #if __CUDA_ARCH__>=200
             //     printf("Scanning index %d, i = %d, j = %d, value %d \n", emptyIndex, i, j, board[emptyIndex] + 1);
             // #endif
-            if(!tryToInsert(board, i, j, board[emptyIndex] + 1))
+            if (!tryToInsert(board, i, j, board[emptyIndex] + 1))
             {
-                if(board[emptyIndex] >= 8)
+                if (board[emptyIndex] >= 8)
                 {
                     board[emptyIndex] = -1;
                     --index;
@@ -177,7 +177,7 @@ __global__ void backtrack(char* input, char* output, int inputSize, bool* isSolv
             ++board[emptyIndex];
         }
 
-        if(index == emptyIndicesSize)
+        if (index == emptyIndicesSize)
         {
             *isSolved = true;
             #if __CUDA_ARCH__>=200
@@ -220,7 +220,7 @@ char* solveGpu(const char* board)
     while(generation < 81)
     {
         ERR(cudaMemset(dev_outputIndex, 0, sizeof(int)));
-        if(generation % 2 == 0)
+        if (generation % 2 == 0)
         {
             generate<<<blocks, threads>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxBoardNumber, dev_status);
         }
@@ -232,7 +232,7 @@ char* solveGpu(const char* board)
         ERR(cudaMemcpy(&inputSize, dev_outputIndex, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ERR(cudaMemcpy(&status, dev_status, sizeof(GENERATE_STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ++generation;
-        if(status != OK || inputSize == 0)
+        if (status != OK || inputSize == 0)
             break;
     }
     auto stop = std::chrono::high_resolution_clock::now();
@@ -243,7 +243,7 @@ char* solveGpu(const char* board)
 
     if (status == SOLVED)
     {
-        auto result = generation % 2 == 0 ? dev_input : dev_output; // take the output as result
+        auto result = generation % 2 == 1 ? dev_input : dev_output; // take the output as result
         ERR(cudaMemcpy(ret, result, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
     }
     else if (inputSize == 0)
@@ -268,6 +268,7 @@ char* solveGpu(const char* board)
         std::cout << "Backtracking took: " << duration.count() << " microseconds" << std::endl;
 
         ERR(cudaFree(dev_isSolved));
+        ERR(cudaFree(dev_output_backtracking));
     }
 
     ERR(cudaFree(dev_input));
