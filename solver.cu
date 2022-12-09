@@ -21,7 +21,7 @@ bool readSudokuFromFile(std::string filepath, char* board)
         for (auto c : input)
         {
             auto num = c - '0';
-            if(c < 0 || c > 9)
+            if (num < 0 || num > 9)
             {
                 return false;
             }
@@ -220,6 +220,7 @@ int main(int argc, char** argv)
         std::cout << "Error reading from file" << std::endl;
         exit(EXIT_FAILURE);
     }
+
     printSudoku(board);
 
     if(!checkIfSudokuValid(board))
