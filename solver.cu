@@ -7,18 +7,28 @@
 #include "solvecpu.cuh"
 #include "solvegpu.cuh"
 
-void readSudokuFromFile(std::string filepath, char* board)
+bool readSudokuFromFile(std::string filepath, char* board)
 {
     std::ifstream fileStream(filepath);
+    if(!fileStream.good())
+    {
+        return false;
+    }
     std::string input;
     int index = 0;
     while (getline(fileStream, input))
     {
         for (auto c : input)
         {
-            board[index++] = c - '0';
+            auto num = c - '0';
+            if(c < 0 || c > 9)
+            {
+                return false;
+            }
+            board[index++] = num;
         }
     }
+    return true;
 }
 
 void printSudoku(char* board)
@@ -205,7 +215,11 @@ int main(int argc, char** argv)
     // data in our board will always be from range <1, 9>, so we use chars as they use only 1B of memory
     char board[BOARDLENGTH];
 
-    readSudokuFromFile(filepath, board);
+    if(!readSudokuFromFile(filepath, board))
+    {
+        std::cout << "Error reading from file" << std::endl;
+        exit(EXIT_FAILURE);
+    }
     printSudoku(board);
 
     if(!checkIfSudokuValid(board))

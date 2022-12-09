@@ -10,20 +10,19 @@
 
 bool solveBacktracking(char* board)
 {
-    int i = 0;
-    int j = 0;
+    int i = 0, j = 0;
 
-    if(!findEmpty(board, i, j))
+    if (!findEmpty(board, i, j))
     {
         return true;
     }
 
     for(int num = 1; num < 10; ++num)
     {
-        if(tryToInsert(board, i, j, num))
+        if (tryToInsert(board, i, j, num))
         {
             board[i * BOARDSIZE + j] = num;
-            if(solveBacktracking(board))
+            if (solveBacktracking(board))
             {
                 return true;
             }
@@ -38,7 +37,7 @@ char* solveCpu(const char* board)
     char* copy = new char[BOARDLENGTH];
     memcpy(copy, board, sizeof(char) * BOARDLENGTH);
     auto result = solveBacktracking(copy);
-    if(result)
+    if (result)
     {
         return copy;
     }
