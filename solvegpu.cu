@@ -7,8 +7,8 @@
 
 #define MEMORY_USED 0.2
 #define GENERATION_LIMIT 81
-#define BLOCKS 2048
-#define THREADS 1024
+#define GRID_SIZE 2048
+#define BLOCK_SIZE 1024
 
 #define ERR(status) { \
     if (status != cudaSuccess) { \
@@ -124,11 +124,11 @@ __device__ void generateBoards(char* board, char* output, int* outputIndex, int 
     }
 }
 
-__global__ void generate(char* input, char* output, int inputSize, int* outputIndex, int maxOutputSize, STATUS* status)
+__global__ void generate(char* input, char* output, int inputLength, int* outputIndex, int maxOutputSize, STATUS* status)
 {
     auto id = blockDim.x * blockIdx.x + threadIdx.x;
 
-    while (id < inputSize && *status == OK)
+    while (id < inputLength && *status == OK)
     {
         auto board = input + id * BOARDLENGTH; // set the correct input board according to threadIdx
 
@@ -156,7 +156,7 @@ __device__ bool backtrackBoard(char* board, char* emptyIndices)
     // get the array of empty indices. we will try to fill them with correct values
     getEmptyIndices(board, emptyIndices, &emptyIndicesSize);
     char index = 0, i = 0, j = 0;
-    while(index >= 0 && index < emptyIndicesSize)
+    while (index >= 0 && index < emptyIndicesSize)
     {
         // get the next empty space
         auto emptyIndex = emptyIndices[index];
@@ -181,12 +181,12 @@ __device__ bool backtrackBoard(char* board, char* emptyIndices)
     return index == emptyIndicesSize;
 }
 
-__global__ void backtrack(char* input, char* output, int inputSize, STATUS* status)
+__global__ void backtrack(char* input, char* output, int inputLength, STATUS* status)
 {
     auto id = blockDim.x * blockIdx.x + threadIdx.x;
     char emptyIndices[BOARDLENGTH];
 
-    while(id < inputSize && *status != SOLVED)
+    while(id < inputLength && *status != SOLVED)
     {
         auto board = input + id * BOARDLENGTH;
         
@@ -201,58 +201,65 @@ __global__ void backtrack(char* input, char* output, int inputSize, STATUS* stat
     }
 }
 
-bool solveBoard(char* board, char* dev_input, char* dev_output, int* dev_outputIndex, STATUS* dev_status, const int& maxBoardCount)
+inline char* getInputArray(int generation, char* array1, char* array2)
 {
-    int inputSize = 1;
-    int oldInputSize = 1;
+    return generation % 2 == 0 ? array1 : array2;
+}
+
+inline char* getOutputArray(int generation, char* array1, char* array2)
+{
+    return generation % 2 == 0 ? array2 : array1;
+}
+
+bool solveBoard(char* board, char* dev_array1, char* dev_array2, int* dev_outputLength, STATUS* dev_status, const int& maxBoardCount)
+{
+    int inputLength = 1;
+    int oldInputLength = 1;
     int generation = 0;
     STATUS status;
 
-    ERR(cudaMemcpy(dev_input, board, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyHostToDevice));
-    ERR(cudaMemset(dev_output, 0, sizeof(char) * BOARDLENGTH * maxBoardCount));
+    ERR(cudaMemcpy(dev_array1, board, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyHostToDevice));
+    ERR(cudaMemset(dev_array2, 0, sizeof(char) * BOARDLENGTH * maxBoardCount));
 
     auto start = std::chrono::high_resolution_clock::now();
     while(generation < GENERATION_LIMIT)
     {
-        ERR(cudaMemset(dev_outputIndex, 0, sizeof(int)));
-        if (generation % 2 == 0)
-        {
-            generate<<<BLOCKS, THREADS>>>(dev_input, dev_output, inputSize, dev_outputIndex, maxBoardCount, dev_status);
-        }
-        else
-        {
-            generate<<<BLOCKS, THREADS>>>(dev_output, dev_input, inputSize, dev_outputIndex, maxBoardCount, dev_status);
-        }
-        oldInputSize = inputSize;
-        ERR(cudaMemcpy(&inputSize, dev_outputIndex, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost));
+        ERR(cudaMemset(dev_outputLength, 0, sizeof(int)));
+        auto inputArray = getInputArray(generation, dev_array1, dev_array2);
+        auto outputArray = getOutputArray(generation, dev_array1, dev_array2);
+
+        generate<<<GRID_SIZE, BLOCK_SIZE>>>(inputArray, outputArray, inputLength, dev_outputLength, maxBoardCount, dev_status);
+
+        oldInputLength = inputLength;
+        ERR(cudaMemcpy(&inputLength, dev_outputLength, sizeof(int), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ERR(cudaMemcpy(&status, dev_status, sizeof(STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         ++generation;
-        if (status != OK || inputSize == 0)
+        if (status != OK || inputLength == 0)
             break;
     }
     auto stop = std::chrono::high_resolution_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(stop - start);
     std::cout << "Generating boards took: " << duration.count() << " microseconds" << std::endl;
 
-    if (status == SOLVED)
+    if (status == SOLVED) // sudoku was solved only with generating boards
     {
-        auto generationResult = generation % 2 == 1 ? dev_input : dev_output; // take the output as result
+        auto generationResult = getOutputArray(generation, dev_array1, dev_array2); // take the output as result
         ERR(cudaMemcpy(board, generationResult, sizeof(char) * BOARDLENGTH, cudaMemcpyKind::cudaMemcpyDeviceToHost));
         return true;
     }
-    else if (inputSize == 0)
+    else if (inputLength == 0) // generating boards ended preemptively, no solutions were found
     {
         std::cout << "No valid solutions were found for sudoku" << std::endl;
         return false;
     }
-    else
+    else // try backtracking
     {
-        auto generationResult = generation % 2 == 1 ? dev_input : dev_output; // take the last input as result
-        auto output = generation % 2 == 0 ? dev_input : dev_output; // reuse the other array as output
+        auto generationResult = getInputArray(generation - 1, dev_array1, dev_array2); // take the last input as result
+        auto output = getOutputArray(generation - 1, dev_array1, dev_array2); // reuse the other array as output
 
         start = std::chrono::high_resolution_clock::now();
 
-        backtrack<<<BLOCKS, THREADS>>>(generationResult, output, oldInputSize, dev_status);
+        backtrack<<<GRID_SIZE, BLOCK_SIZE>>>(generationResult, output, oldInputLength, dev_status);
         ERR(cudaMemcpy(&status, dev_status, sizeof(STATUS), cudaMemcpyKind::cudaMemcpyDeviceToHost));
         if (status != SOLVED)
         {
@@ -279,13 +286,13 @@ char* solveGpu(const char* board)
 {
     auto start = std::chrono::high_resolution_clock::now();
     int maxBoardCount = getMaxBoardCount();
-    char *dev_input = 0, *dev_output = 0;
-    int* dev_outputIndex = 0;
+    char *dev_array1 = 0, *dev_array2 = 0;
+    int* dev_outputLength = 0;
     STATUS* dev_status;    
 
-    ERR(cudaMalloc(&dev_input, sizeof(char) * BOARDLENGTH * maxBoardCount));
-    ERR(cudaMalloc(&dev_output, sizeof(char) * BOARDLENGTH * maxBoardCount));
-    ERR(cudaMalloc(&dev_outputIndex, sizeof(int)));
+    ERR(cudaMalloc(&dev_array1, sizeof(char) * BOARDLENGTH * maxBoardCount));
+    ERR(cudaMalloc(&dev_array2, sizeof(char) * BOARDLENGTH * maxBoardCount));
+    ERR(cudaMalloc(&dev_outputLength, sizeof(int)));
     ERR(cudaMalloc(&dev_status, sizeof(int)));
 
     auto stop = std::chrono::high_resolution_clock::now();
@@ -295,11 +302,11 @@ char* solveGpu(const char* board)
     char* copy = new char[BOARDLENGTH];
     memcpy(copy, board, BOARDLENGTH);
 
-    auto result = solveBoard(copy, dev_input, dev_output, dev_outputIndex, dev_status, maxBoardCount);
+    auto result = solveBoard(copy, dev_array1, dev_array2, dev_outputLength, dev_status, maxBoardCount);
 
-    ERR(cudaFree(dev_input));
-    ERR(cudaFree(dev_output));
-    ERR(cudaFree(dev_outputIndex));
+    ERR(cudaFree(dev_array1));
+    ERR(cudaFree(dev_array2));
+    ERR(cudaFree(dev_outputLength));
     ERR(cudaFree(dev_status));
 
     return result ? copy : nullptr;
